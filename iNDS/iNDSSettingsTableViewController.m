@@ -9,7 +9,6 @@
 #import "iNDSSettingsTableViewController.h"
 #import "AppDelegate.h"
 #import "iNDSEmulatorViewController.h"
-#import "iNDSEmulatorSettingsViewController.h"
 #import "iNDSEmulationProfile.h"
 #import <QuartzCore/QuartzCore.h>
 #import "WCEasySettingsViewController.h"
@@ -151,10 +150,10 @@
 
 - (void)prepareForSegue:(UIStoryboardSegue *)segue sender:(id)sender
 {
-    if ([segue.identifier isEqualToString:@"EmulatorSettings"]) {
-        iNDSEmulatorSettingsViewController * vc = segue.destinationViewController;
-        vc.navigationItem.leftBarButtonItems = nil;
-    }
+//    if ([segue.identifier isEqualToString:@"EmulatorSettings"]) {
+//        iNDSEmulatorSettingsViewController * vc = segue.destinationViewController;
+//        vc.navigationItem.leftBarButtonItems = nil;
+//    }
 }
 
 @end

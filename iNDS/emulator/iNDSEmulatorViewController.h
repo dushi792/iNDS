@@ -33,4 +33,5 @@
 - (void)newSaveState;
 - (void)reloadEmulator;
 - (void)setLidClosed:(BOOL)closed;
+- (void)exitEmulation;
 @end

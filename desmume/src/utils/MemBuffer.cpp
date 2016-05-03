@@ -26,6 +26,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <unistd.h>
+#include <fcntl.h>
 #endif
 
 u32 MemBuffer::s_PageSize = 0;
@@ -143,7 +144,10 @@ u8* MemBuffer::Reserve(u32 size)
 	m_ReservedSize = m_ReservedPages * s_PageSize;
 	m_CommittedSize = 0;
 
-	m_Baseptr = (u8*)mmap(NULL, m_ReservedSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    // A hack that worked in previous ios version
+    int fd = open("bar", O_RDWR);
+    m_Baseptr = (u8*)mmap(NULL, m_ReservedSize, PROT_READ | PROT_WRITE | PROT_EXEC,  MAP_JIT | MAP_PRIVATE | MAP_FILE, fd, 0);
+	//m_Baseptr = (u8*)mmap(NULL, m_ReservedSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (m_Baseptr == MAP_FAILED) {
         printf("MMAP failed: %u\n", m_ReservedSize);
 		Release();

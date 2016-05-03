@@ -18,7 +18,6 @@ TPCircularBuffer *buf;
 bool micEnabled;
 volatile float micSampleRate = 0.0;
 
-#define SampleRateModifer 3
 
 void Mic_DeInit(){
     printf("Mic_DeInit\n");
@@ -62,9 +61,9 @@ u8 Mic_ReadSample(){
     
     int32_t availableBytes;
     u8 *stream = (u8 *)TPCircularBufferTail(buf, &availableBytes);
-    int32_t index = availableBytes > 4096 ? (3081/SampleRateModifer) : 0; // Skip when the buffer starts overflowing
+    int32_t index = availableBytes > 1024 ? 512 : 0; // Skip when the buffer starts overflowing
     if (availableBytes > 0) {
-        TPCircularBufferConsume(buf, (index + 1) * SampleRateModifer);
+        TPCircularBufferConsume(buf, (index + 1));
         // The ds mic is much less sensitive so the sound needs to be dampened
         s8 sample = (stream[index] - 128);
         

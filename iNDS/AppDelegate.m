@@ -301,18 +301,25 @@
 }
 
 - (void)startGame:(iNDSGame *)game withSavedState:(NSInteger)savedState
-{;
+{
     if (!self.currentEmulatorViewController) {
         iNDSEmulatorViewController *emulatorViewController = (iNDSEmulatorViewController *)[[UIStoryboard storyboardWithName:@"MainStoryboard" bundle:nil] instantiateViewControllerWithIdentifier:@"emulatorView"];
-        emulatorViewController.game = game;
         emulatorViewController.saveState = [game pathForSaveStateAtIndex:savedState];
-        [AppDelegate sharedInstance].currentEmulatorViewController = emulatorViewController;
+        self.currentEmulatorViewController = emulatorViewController;
         iNDSInitialViewController *rootViewController = (iNDSInitialViewController*)[self topMostController];
         //[rootViewController doSlideIn:nil];
-        [rootViewController presentViewController:emulatorViewController animated:YES completion:nil];
+        [rootViewController presentViewController:emulatorViewController animated:YES completion:^{
+            // Make sure the view is loaded
+            emulatorViewController.game = game;
+        }];
+        
     } else {
         self.currentEmulatorViewController.saveState = [game pathForSaveStateAtIndex:savedState];
-        [self.currentEmulatorViewController changeGame:game];
+        self.currentEmulatorViewController.game = game;
+        if (!self.currentEmulatorViewController.isViewLoaded || !self.currentEmulatorViewController.view.window) {
+            iNDSInitialViewController *rootViewController = (iNDSInitialViewController*)[self topMostController];
+            [rootViewController presentViewController:self.currentEmulatorViewController animated:YES completion:nil];
+        }
     }
 }
 
@@ -428,12 +435,12 @@
                                                                                   @"Super Eagle",
                                                                                   @"2xSaI",
                                                                                   @"Super 2xSaI",
-                                                                                  @"BRZ 2x (Recommended)",
+                                                                                  @"xBRZ 2x (Recommended)",
                                                                                   @"Low Quality 2x",
-                                                                                  @"BRZ 3x",
+                                                                                  @"xBRZ 3x",
                                                                                   @"High Quality 2x",
                                                                                   @"High Quality 4x",
-                                                                                  @"BRZ 4x"]
+                                                                                  @"xBRZ 4x"]
                                                                    optionSubtitles:nil
                                                                         subtitle:@"Video filters make the picture sharper but can cause the emulator to run slower. Filters are ordered by lowest quality at the top to best at the bottom. If you're not sure, you can experiment or pick the highest quality that still makes games run at 60fps."];
         graphicsSection.items = @[filterOptions];

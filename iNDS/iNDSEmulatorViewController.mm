@@ -33,6 +33,8 @@
 
 #import <AVFoundation/AVFoundation.h>
 
+#import "iNDSEmulatorOverlayView.h"
+
 #define STRINGIZE(x) #x
 #define STRINGIZE2(x) STRINGIZE(x)
 #define SHADER_STRING(text) @ STRINGIZE2(text)
@@ -150,6 +152,7 @@ enum VideoFilter : NSUInteger {
 @property (weak, nonatomic) IBOutlet UIButton *selectButton;
 @property (weak, nonatomic) IBOutlet UIButton *leftTrigger;
 @property (weak, nonatomic) IBOutlet UIButton *rightTrigger;
+@property (strong, nonatomic) IBOutlet iNDSEmulatorOverlayView *settingsView;
 @property (strong, nonatomic) UIImageView *snapshotView;
 
 - (IBAction)onButtonUp:(UIControl*)sender;
@@ -160,15 +163,6 @@ enum VideoFilter : NSUInteger {
 @implementation iNDSEmulatorViewController
 
 #pragma mark - UIViewController
-
-- (id)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil
-{
-    self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil];
-    if (self) {
-        // Custom initialization
-    }
-    return self;
-}
 
 - (void)viewDidLoad
 {
@@ -232,26 +226,15 @@ enum VideoFilter : NSUInteger {
     
     _speed = 1;
 
-    
-    CGRect settingsRect = self.settingsContainer.frame;
-    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"fullScreenSettings"]) {
-        settingsRect = self.view.frame;
-    } else {
-        settingsRect.size.width = MIN(500, self.view.frame.size.width - 70);
-        settingsRect.size.height = MIN(600, self.view.frame.size.height - 140);
-        self.settingsContainer.layer.cornerRadius = 7;
-    }
-    self.settingsContainer.frame = settingsRect;
-    self.settingsContainer.center = self.view.center;
-    self.settingsContainer.subviews[0].frame = self.settingsContainer.bounds; //Set the inside view
+    self.settingsView = [[iNDSEmulatorOverlayView alloc] initWithFrame:self.view.bounds];
+    self.settingsView.alpha = 0;
+    [self .view addSubview:self.settingsView];
     
     // ICade
     iCadeReaderView *control = [[iCadeReaderView alloc] initWithFrame:CGRectZero];
     [self.view addSubview:control];
     control.active = YES;
     control.delegate = self;
-    
-    disableTouchScreen = [[NSUserDefaults standardUserDefaults] boolForKey:@"disableTouchScreen"];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -269,23 +252,23 @@ enum VideoFilter : NSUInteger {
 - (void)viewDidAppear:(BOOL)animated
 {
     [super viewDidAppear:animated];
-    if (!settingsShown)
-        [self loadROM];
     [self defaultsChanged:nil];
     [self.profile ajustLayout];
 }
 
-- (void)changeGame:(iNDSGame *)newGame
+- (void)setGame:(iNDSGame *)game
 {
-    NSLog(@"Changing Game");
-    [self saveStateWithName:@"Pause"];
-    [self suspendEmulation];
-    //EMU_closeRom();
-    self.game = newGame;
+    if (_game) {
+        NSLog(@"Changing Game");
+        [self saveStateWithName:@"Pause"];
+        [self suspendEmulation];
+        //EMU_closeRom();
+    }
+    _game = game;
     [self loadROM];
     dispatch_async(dispatch_get_main_queue(), ^{
         [self.profile ajustLayout];
-        [self toggleSettings:self];
+        //[self toggleSettings:self];
     });
 }
 
@@ -351,6 +334,8 @@ enum VideoFilter : NSUInteger {
     } else {
         [volumeStealer stopStealingVolumeButtonEvents];
     }
+    
+    disableTouchScreen = [[NSUserDefaults standardUserDefaults] boolForKey:@"disableTouchScreen"];
     
     [self.view setNeedsLayout];
 }
@@ -565,7 +550,6 @@ enum VideoFilter : NSUInteger {
 
 - (void)suspendEmulation
 {
-    [self setLidClosed:YES];
     NSLog(@"Suspending");
     [self pauseEmulation];
     // Shutting down while editing a layout causes a ton of problems.
@@ -607,6 +591,9 @@ enum VideoFilter : NSUInteger {
 {
     [self.view endEditing:YES];
     [self updateDisplay]; //This has to be called once before we touch or move any glk views
+    
+    // Not used yet
+    __block BOOL lowPower = [[NSProcessInfo processInfo] isLowPowerModeEnabled];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
     //dispatch_async(dispatch_get_main_queue(), ^{
         displaySemaphore = dispatch_semaphore_create(1);
@@ -630,21 +617,30 @@ enum VideoFilter : NSUInteger {
                 CGFloat coreTime = [[NSUserDefaults standardUserDefaults] floatForKey:@"coreTime"];
                 coreTime = coreTime * 0.95 + (CACurrentMediaTime() - coreStart) * 0.05;
                 [[NSUserDefaults standardUserDefaults] setFloat:coreTime forKey:@"coreTime"];
+                lowPower = [[NSProcessInfo processInfo] isLowPowerModeEnabled];
                 if ([[NSUserDefaults standardUserDefaults] boolForKey:@"periodicSave"]) {
                     [self saveStateWithName:[NSString stringWithFormat:@"Auto Save"]];
                 }
                 lastAutosave = CACurrentMediaTime();
             }
             
-            // Core will always be one frame ahead
-            dispatch_semaphore_wait(displaySemaphore, DISPATCH_TIME_FOREVER);
-            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+            NSInteger filter = [[NSUserDefaults standardUserDefaults] integerForKey:@"videoFilter"];
+            if (filter == 0) {
                 EMU_copyMasterBuffer();
-                //This will automatically throttle fps to 60
                 [self updateDisplay];
-                dispatch_semaphore_signal(displaySemaphore);
-            });
+            } else {
+                // Core will always be one frame ahead
+                dispatch_semaphore_wait(displaySemaphore, DISPATCH_TIME_FOREVER);
+                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+                    EMU_copyMasterBuffer();
+                    //This will automatically throttle fps to 60
+                    [self updateDisplay];
+                    dispatch_semaphore_signal(displaySemaphore);
+                });
+            }
+            
         }
+        NSLog(@"Loop Stopped");
         [[iNDSMFIControllerSupport instance] stopMonitoringGamePad];
         [emuLoopLock unlock];
     });
@@ -890,51 +886,33 @@ FOUNDATION_EXTERN void AudioServicesPlaySystemSoundWithVibration(unsigned long, 
 
 - (IBAction)toggleSettings:(id)sender
 {
-    UIView * statusBar = [self statuBarView];
     if (!settingsShown) { //About to show settings
-        [self setLidClosed:YES];
+        //[self setLidClosed:YES];
         // Give time for lid close
-        //dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [volumeStealer performSelector:@selector(stopStealingVolumeButtonEvents) withObject:nil afterDelay:0.1]; //Non blocking
-            if ([[NSUserDefaults standardUserDefaults] boolForKey:@"fullScreenSettings"]) {
-                [[UIApplication sharedApplication] setStatusBarHidden:NO];
-                statusBar.alpha = 0;
-            }
-            [self.settingsContainer setHidden:NO];
+            
             [self pauseEmulation];
             [UIView animateWithDuration:0.3 animations:^{
-                self.darkenView.hidden = NO;
-                self.darkenView.alpha = 0.6;
-                self.settingsContainer.alpha = 1;
-                if ([[NSUserDefaults standardUserDefaults] boolForKey:@"fullScreenSettings"]) {
-                    statusBar.alpha = 1;
-                }
+                self.settingsView.alpha = 1;
             } completion:^(BOOL finished) {
                 settingsShown = YES;
                 if (!inEditingMode)
                     [CHBgDropboxSync start];
             }];
-        //});
+        });
         
     } else {
         if ([[NSUserDefaults standardUserDefaults] integerForKey:@"volumeBumper"]) {
             [volumeStealer performSelector:@selector(startStealingVolumeButtonEvents) withObject:nil afterDelay:0.1];
         }
         [UIView animateWithDuration:0.3 animations:^{
-            self.darkenView.alpha = 0.0;
-            self.settingsContainer.alpha = 0;
-            statusBar.alpha = 0;
+            self.settingsView.alpha = 0;
         } completion:^(BOOL finished) {
-            [[UIApplication sharedApplication] setStatusBarHidden:YES];
             settingsShown = NO;
-            self.settingsContainer.hidden = YES;
             [self resumeEmulation];
-            self.darkenView.hidden = YES;
         }];
-
-        disableTouchScreen = [[NSUserDefaults standardUserDefaults] boolForKey:@"disableTouchScreen"];
-        
-        [self setLidClosed:NO];
+        //[self setLidClosed:NO];
     }
     
 }
@@ -952,15 +930,11 @@ FOUNDATION_EXTERN void AudioServicesPlaySystemSoundWithVibration(unsigned long, 
     
 }
 
-- (UIView *)statuBarView
+- (void)exitEmulation
 {
-    NSString *key = @"statusBar";
-    id object = [UIApplication sharedApplication];
-    UIView *statusBar = nil;
-    if ([object respondsToSelector:NSSelectorFromString(key)]) {
-        statusBar = [object valueForKey:key];
-    }
-    return statusBar;
+    [self suspendEmulation];
+    NSLog(@"Suspended");
+    [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 #pragma mark - Saving
