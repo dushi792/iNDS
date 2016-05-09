@@ -14,8 +14,10 @@
 #import "iNDSDirectionalControl.h"
 #import "iNDSButtonControl.h"
 #import "CHBgDropboxSync.h"
+
 #import "UIDevice+Private.h"
 #import "RBVolumeButtons.h"
+#import "SharkfoodMuteSwitchDetector.h"
 
 #import <GLKit/GLKit.h>
 #import <OpenGLES/ES2/gl.h>
@@ -132,7 +134,9 @@ enum VideoFilter : NSUInteger {
     UINavigationController * settingsNav;
     
     RBVolumeButtons *volumeStealer;
+    SharkfoodMuteSwitchDetector *muteDetector;
     
+    CADisplayLink *coreLink;
     dispatch_semaphore_t displaySemaphore;
 }
 
@@ -226,6 +230,12 @@ enum VideoFilter : NSUInteger {
         });
     };
     
+    muteDetector = [SharkfoodMuteSwitchDetector shared];
+    __weak iNDSEmulatorViewController* weakself = self;
+    muteDetector.silentNotify = ^(BOOL silent){
+        [weakself defaultsChanged:nil];
+    };
+    
     
     
     [self defaultsChanged:nil];
@@ -252,6 +262,15 @@ enum VideoFilter : NSUInteger {
     control.delegate = self;
     
     disableTouchScreen = [[NSUserDefaults standardUserDefaults] boolForKey:@"disableTouchScreen"];
+    
+    coreLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(emulatorLoop)];
+    coreLink.paused = YES;
+    NSLog(@"Time Interval: %f", coreLink.duration);
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        [coreLink addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+        [[NSRunLoop currentRunLoop] run];
+    });
+    
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -325,13 +344,12 @@ enum VideoFilter : NSUInteger {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     if (emuLoopLock) { //Only update these is the core has loaded
         EMU_setFrameSkip((int)[defaults integerForKey:@"frameSkip"]);
-        EMU_enableSound(![defaults boolForKey:@"disableSound"]);
         EMU_setSynchMode([defaults boolForKey:@"synchSound"]);
-        // Enable sound?
+        
         // (Mute on && don't ignore it) or user has sound disabled
-        BOOL muteSound = ([self muteButtonOn] && ![defaults boolForKey:@"ignoreMute"]) || [defaults boolForKey:@"disableSound"];
+        BOOL muteSound = (muteDetector.isMute && ![defaults boolForKey:@"ignoreMute"]) || [defaults boolForKey:@"disableSound"];
         EMU_enableSound(!muteSound);
-        [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayAndRecord
+                [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayAndRecord
                                          withOptions:(AVAudioSessionCategoryOptionAllowBluetooth |
                                                       AVAudioSessionCategoryOptionMixWithOthers |
                                                       AVAudioSessionCategoryOptionDefaultToSpeaker)
@@ -355,11 +373,6 @@ enum VideoFilter : NSUInteger {
     [self.view setNeedsLayout];
 }
 
-// Not sure if we can figure this out
-- (BOOL)muteButtonOn
-{
-    return NO;
-}
 
 -(BOOL) isPortrait
 {
@@ -430,6 +443,8 @@ enum VideoFilter : NSUInteger {
 
 #pragma mark - Playing ROM
 
+
+
 - (void)loadROM {
     NSLog(@"Loading ROM %@", self.game.path);
     EMU_setWorkingDir([[self.game.path stringByDeletingLastPathComponent] fileSystemRepresentation]);
@@ -485,12 +500,7 @@ enum VideoFilter : NSUInteger {
     self.profile.mainScreen = glkView[0];
     self.profile.touchScreen = glkView[1];
     
-    //ToDo: make this better
-    BOOL bicubic = [[NSUserDefaults standardUserDefaults] boolForKey:@"highresGraphics"];
-    if (bicubic) {
-        kFragShader = [NSString stringWithContentsOfFile:[[NSBundle mainBundle] pathForResource:@"Shader" ofType:@"fsh"] encoding:NSUTF8StringEncoding error:nil];
-    } else {
-        kFragShader = SHADER_STRING (
+    kFragShader = SHADER_STRING (
                        uniform sampler2D inputImageTexture;
                        varying highp vec2 texCoord;
                        
@@ -500,7 +510,7 @@ enum VideoFilter : NSUInteger {
                            gl_FragColor = color;
                        }
                        );
-    }
+    
     
     self.program = [[GLProgram alloc] initWithVertexShaderString:kVertShader fragmentShaderString:kFragShader];
     
@@ -525,7 +535,7 @@ enum VideoFilter : NSUInteger {
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, texHandle[0]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, bicubic ? GL_NEAREST : GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     
@@ -533,7 +543,7 @@ enum VideoFilter : NSUInteger {
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, texHandle[1]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, bicubic ? GL_NEAREST : GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
@@ -607,35 +617,61 @@ enum VideoFilter : NSUInteger {
 {
     [self.view endEditing:YES];
     [self updateDisplay]; //This has to be called once before we touch or move any glk views
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-    //dispatch_async(dispatch_get_main_queue(), ^{
-        displaySemaphore = dispatch_semaphore_create(1);
-        CGFloat framesToRender = 0;
+    
+    displaySemaphore = dispatch_semaphore_create(1);
+    
+    lastAutosave = CACurrentMediaTime();
+    [emuLoopLock lock];
+    [[iNDSMFIControllerSupport instance] startMonitoringGamePad];
+    
+    coreFps = videoFps = 30;
+    
+    coreLink.paused = NO;
+}
+
+- (void)endEmulatorLoop
+{
+    NSLog(@"Ending loop");
+    [[iNDSMFIControllerSupport instance] stopMonitoringGamePad];
+    [emuLoopLock unlock];
+    coreLink.paused = YES;
+}
+
+//Relocate
+CFTimeInterval coreStart, loopStart;
+CGFloat framesToRender = 0;
+NSInteger filter = [[NSUserDefaults standardUserDefaults] integerForKey:@"videoFilter"];
+
+- (void)emulatorLoop
+{
+    if (!execute) {
+        [self endEmulatorLoop];
+    }
+    loopStart = CACurrentMediaTime();
+    framesToRender += self.speed;
+    
+    for (;framesToRender >= 1; framesToRender--) {
+        coreStart = CACurrentMediaTime();
+        EMU_runCore();
+        coreFps = coreFps * 0.99 + (1 / (CACurrentMediaTime() - coreStart)) * 0.01;
+    }
+    
+    if (CACurrentMediaTime() - lastAutosave > 180) {
+        CGFloat coreTime = [[NSUserDefaults standardUserDefaults] floatForKey:@"coreTime"];
+        coreTime = coreTime * 0.95 + (CACurrentMediaTime() - coreStart) * 0.05;
+        [[NSUserDefaults standardUserDefaults] setFloat:coreTime forKey:@"coreTime"];
+        if ([[NSUserDefaults standardUserDefaults] boolForKey:@"periodicSave"]) {
+            [self saveStateWithName:[NSString stringWithFormat:@"Auto Save"]];
+        }
         lastAutosave = CACurrentMediaTime();
-        [emuLoopLock lock];
-        [[iNDSMFIControllerSupport instance] startMonitoringGamePad];
-        CFTimeInterval coreStart, loopStart;
-        coreFps = videoFps = 30;
-        while (execute) {
-            loopStart = CACurrentMediaTime();
-            framesToRender += self.speed;
-            
-            for (;framesToRender >= 1; framesToRender--) {
-                coreStart = CACurrentMediaTime();
-                EMU_runCore();
-                coreFps = coreFps * 0.95 + (1 / (CACurrentMediaTime() - coreStart)) * 0.05;
-            }
-            
-            if (CACurrentMediaTime() - lastAutosave > 180) {
-                CGFloat coreTime = [[NSUserDefaults standardUserDefaults] floatForKey:@"coreTime"];
-                coreTime = coreTime * 0.95 + (CACurrentMediaTime() - coreStart) * 0.05;
-                [[NSUserDefaults standardUserDefaults] setFloat:coreTime forKey:@"coreTime"];
-                if ([[NSUserDefaults standardUserDefaults] boolForKey:@"periodicSave"]) {
-                    [self saveStateWithName:[NSString stringWithFormat:@"Auto Save"]];
-                }
-                lastAutosave = CACurrentMediaTime();
-            }
-            
+        filter = [[NSUserDefaults standardUserDefaults] integerForKey:@"videoFilter"];
+    }
+    if (!iNDS_frameSkip()) {
+        if (filter == -1) {
+            EMU_copyMasterBuffer();
+            [self updateDisplay];
+        } else {
+            // Run the filter on a seperate thread to increase performance
             // Core will always be one frame ahead
             dispatch_semaphore_wait(displaySemaphore, DISPATCH_TIME_FOREVER);
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
@@ -645,9 +681,7 @@ enum VideoFilter : NSUInteger {
                 dispatch_semaphore_signal(displaySemaphore);
             });
         }
-        [[iNDSMFIControllerSupport instance] stopMonitoringGamePad];
-        [emuLoopLock unlock];
-    });
+    }
 }
 
 - (void)saveStateWithName:(NSString*)saveStateName
@@ -673,7 +707,7 @@ enum VideoFilter : NSUInteger {
     static CFTimeInterval fpsUpdateTime = 0;
     if (CACurrentMediaTime() - fpsUpdateTime > 1) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            self.fpsLabel.text = [NSString stringWithFormat:@"%d FPS %d Max Core", MIN((int)videoFps + 5, 60), (int)(coreFps / self.speed)];
+            self.fpsLabel.text = [NSString stringWithFormat:@"%d FPS %d Max Core", MIN((int)videoFps, 60), (int)(coreFps / self.speed)];
         });
         fpsUpdateTime = CACurrentMediaTime();
     }
@@ -714,7 +748,6 @@ enum VideoFilter : NSUInteger {
 - (void) setSpeed:(CGFloat)speed
 {
     if (!self.program) return;
-    int userFrameSkip = (int)[[NSUserDefaults standardUserDefaults] integerForKey:@"frameSkip"];
     if (speed < 1) { //Force this. Audio sounds so bad < 1 when synched
         EMU_setSynchMode(0);
     } else {
@@ -725,6 +758,7 @@ enum VideoFilter : NSUInteger {
 
 - (void)setLidClosed:(BOOL)closed
 {
+    return; //Disabled until freezing is fixed
     if (closed) {
         EMU_buttonDown((BUTTON_ID)13);
     } else {
@@ -917,6 +951,7 @@ FOUNDATION_EXTERN void AudioServicesPlaySystemSoundWithVibration(unsigned long, 
         //});
         
     } else {
+        
         if ([[NSUserDefaults standardUserDefaults] integerForKey:@"volumeBumper"]) {
             [volumeStealer performSelector:@selector(startStealingVolumeButtonEvents) withObject:nil afterDelay:0.1];
         }
@@ -931,7 +966,7 @@ FOUNDATION_EXTERN void AudioServicesPlaySystemSoundWithVibration(unsigned long, 
             [self resumeEmulation];
             self.darkenView.hidden = YES;
         }];
-
+        
         disableTouchScreen = [[NSUserDefaults standardUserDefaults] boolForKey:@"disableTouchScreen"];
         
         [self setLidClosed:NO];

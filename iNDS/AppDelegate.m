@@ -25,6 +25,8 @@
 
 #import "iNDSSpeedTest.h"
 #import "iNDSDropboxTableViewController.h"
+#import "WCBuildStoreClient.h"
+#import "iNDSBuildStoreTableViewController.h"
 
 #ifdef UseRarKit
 #import <UnrarKit/UnrarKit.h>
@@ -126,6 +128,7 @@
                 [[NSUserDefaults standardUserDefaults] setBool:true forKey:@"enableDropbox"];
                 [CHBgDropboxSync clearLastSyncData];
                 [CHBgDropboxSync start];
+                [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"enableDropbox"];
             }
             return YES;
         }
@@ -453,11 +456,13 @@
         // Audio
         WCEasySettingsSection *audioSection = [[WCEasySettingsSection alloc] initWithTitle:@"Audio" subTitle:@""];
         audioSection.items = @[[[WCEasySettingsSwitch alloc] initWithIdentifier:@"disableSound"
-                                                                             title:@"Disable Sound"],
-                                  [[WCEasySettingsSwitch alloc] initWithIdentifier:@"synchSound"
-                                                                             title:@"Synchronous Audio"],
-                                  [[WCEasySettingsSwitch alloc] initWithIdentifier:@"enableMic"
-                                                                             title:@"Enable Mic"]];
+                                                                          title:@"Disable Sound"],
+                               [[WCEasySettingsSwitch alloc] initWithIdentifier:@"ignoreMute"
+                                                                          title:@"Ignore Mute Button"],
+                               [[WCEasySettingsSwitch alloc] initWithIdentifier:@"synchSound"
+                                                                          title:@"Synchronous Audio"],
+                               [[WCEasySettingsSwitch alloc] initWithIdentifier:@"enableMic"
+                                                                          title:@"Enable Mic"]];
         
         
         //Dropbox
@@ -469,10 +474,20 @@
         
         dropboxSection.items = @[dropBox];
         
+        // Buildstore
+        
+        WCEasySettingsSection *buildStoreSection = [[WCEasySettingsSection alloc] initWithTitle:@"Build Store" subTitle:@"Automatically update app through the Build Store"];
+        
+        WCEasySettingsCustom *buildStore = [[WCEasySettingsCustom alloc] initWithTitle:@"Build Store"
+                                                                              subtitle:@""
+                                                                        viewController:[[iNDSBuildStoreTableViewController alloc] initWithStyle:UITableViewStyleGrouped]];
+        buildStoreSection.items = @[buildStore];
+        
+        
         // Core
         WCEasySettingsSection *coreSection = [[WCEasySettingsSection alloc] initWithTitle:@"Core" subTitle:@"JIT can be used to speedup emulation but only a few devices are capable of running it right now."];
         WCEasySettingsOption *engineOption;
-        if (sizeof(void*) == 4) {
+        if (sizeof(void*) == 4) { //32bit
             engineOption = [[WCEasySettingsOption alloc] initWithIdentifier:@"cpuMode"
                                                                       title:@"Emulator Engine"
                                                                     options:@[@"Interpreter",
@@ -487,7 +502,16 @@
                                                             optionSubtitles:nil
                                                                    subtitle:@"JIT is not yet available for your device."];
         }
-        coreSection.items = @[engineOption];
+        
+        coreSection.items = @[engineOption,
+                              [[WCEasySettingsSegment alloc] initWithIdentifier:@"frameSkip"
+                                                                          title:@"Frame Skip"
+                                                                          items:@[@"None",
+                                                                                  @"1",
+                                                                                  @"2",
+                                                                                  @"3",
+                                                                                  @"4"]]
+                              ];
         
         
         // Auto Save
@@ -535,7 +559,7 @@
         
         
         
-        _settingsViewController.sections = @[controlsSection, dropboxSection, graphicsSection, coreSection, emulatorSection, audioSection, interfaceSection, creditsSection];
+        _settingsViewController.sections = @[controlsSection, dropboxSection, /*buildStoreSection,*/ graphicsSection, coreSection, emulatorSection, audioSection, interfaceSection, creditsSection];
     }
     
     return _settingsViewController;
