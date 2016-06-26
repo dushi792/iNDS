@@ -348,11 +348,7 @@ enum VideoFilter : NSUInteger {
         // (Mute on && don't ignore it) or user has sound disabled
         BOOL muteSound = (muteDetector.isMute && ![defaults boolForKey:@"ignoreMute"]) || [defaults boolForKey:@"disableSound"];
         EMU_enableSound(!muteSound);
-                [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayAndRecord
-                                         withOptions:(AVAudioSessionCategoryOptionAllowBluetooth |
-                                                      AVAudioSessionCategoryOptionMixWithOthers |
-                                                      AVAudioSessionCategoryOptionDefaultToSpeaker)
-                                               error:nil];
+        [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayAndRecord error:nil];
         
         // Filter
         int filterTranslate[] = {NONE, EPX, SUPEREAGLE, _2XSAI, SUPER2XSAI, BRZ2x, LQ2X, BRZ3x, HQ2X, HQ4X, BRZ4x, BRZ5x};
@@ -700,7 +696,7 @@ NSInteger filter = [[NSUserDefaults standardUserDefaults] integerForKey:@"videoF
     static CFTimeInterval fpsUpdateTime = 0;
     if (CACurrentMediaTime() - fpsUpdateTime > 1) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            self.fpsLabel.text = [NSString stringWithFormat:@"%d FPS %d Max Core", (int)videoFps/*MIN((int)videoFps, 60)*/, (int)(coreFps / self.speed)];
+            self.fpsLabel.text = [NSString stringWithFormat:@"%d FPS %d Max Core", MIN((int)videoFps, 60), (int)(coreFps / self.speed)];
         });
         fpsUpdateTime = CACurrentMediaTime();
     }
